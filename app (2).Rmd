@@ -1,0 +1,337 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(plotly)
+library(shinydashboard)
+library(shiny)
+library(dplyr)
+library(httr)
+library(readr)
+library(shinyWidgets)
+library(shinythemes)
+library(scales)
+library(ggmap)
+library(ggplot2)
+
+#Importer le fichier csv 
+df = read_csv2(file = "Exemple_Hypermarché_Achats.csv")
+```
+
+
+```{r}
+
+#Definir le format "date" et sélectionner les années
+df$year = as.numeric(format(as.Date(df$`Date de commande`, format="%d/%m/%Y"),"%Y")) 
+
+#Definir le format "date" et sélectionner les mois
+df$month = months(as.Date(df$`Date de commande`, format="%d/%m/%Y")) 
+
+#Liste des pays en Français(pour les input et la carte)
+liste_des_pays_fr = c("Royaume-Uni","France", "Allemagne", "Italie","Espagne","Pays-Bas","Suède","Belgique",
+                        "Autriche","Irlande","Portugal","Finlande","Danemark","Norvège","Suisse")
+
+#Liste des pays en Anglais (pour les input et la carte)
+liste_des_pays_anglais = c("UK", "France", "Germany", "Italy","Spain","Netherlands","Sweden","Belgium",
+                     "Austria","Ireland","Portugal","Finland","Denmark","Norway","Switzerland")
+```
+
+```{r}
+#Données pour le premier pie chart
+category_data = df %>%
+  group_by(Catégorie,year) %>%
+  summarize('ventes_tot'= sum(Ventes)) %>%
+  ungroup()
+category_data_2 = category_data %>%
+  group_by(year) %>%
+  mutate('sum' = sum(ventes_tot)) %>%
+  mutate('Pourcentage'= round(ventes_tot/sum *100,digit=2))
+```
+```{r}
+#Données pour le deuxième pie chart
+segment_data = df %>%
+  group_by(Segment,year) %>%
+  summarize('ventes_tot'= sum(Ventes)) %>%
+  ungroup()
+segment_data_2 = segment_data %>%
+  group_by(year) %>%
+  mutate('sum' = sum(ventes_tot)) %>%
+  mutate('Pourcentage'= round(ventes_tot/sum *100,digit=2))
+
+#Données pour le troisième pie chart
+mode_expedition_data = df %>%
+  group_by(`Mode d'expédition`,year) %>%
+  summarize('ventes_tot'= sum(Ventes)) %>%
+  ungroup()
+mode_expedition_data_2 = mode_expedition_data %>%
+  group_by(year) %>%
+  mutate('sum' = sum(ventes_tot)) %>%
+  mutate('Pourcentage'= round(ventes_tot/sum *100,digit=2))
+
+#partie bar plot
+ventes = df %>% 
+  group_by(year) %>%
+  summarize('ventes' = sum(Ventes)) %>%
+  ungroup()
+
+profits = df %>% 
+  group_by(year) %>%
+  summarize('profits' = sum(Profit)) %>%
+  ungroup()
+
+bar_plot_data = left_join(ventes,profits,by = c('year'='year'))
+
+
+#Partie carte
+#importer les longitudes et latitudes des différents pays 
+mapdata <- map_data('world')
+
+#Les données importées sont en anglais, du coup on créer dataframe countries pour la jointure
+countries<- data.frame(liste_des_pays_anglais,liste_des_pays_fr)
+
+#Nommer les deux colonnes de la dataframe
+names(countries) <- c("english_name","french_name")
+
+#Une première jointure pour sélectionner uniquement les 15 pays pour notre analyse
+first_join <- left_join(countries, mapdata, by=c('english_name'='region'))
+
+#Sélectionner les colonnes nécessaires pour créer notre carte 
+nombre_de_ventes <- df[,c("Date de commande","Pays/Région","Ventes")]
+nombre_de_ventes$`Date de commande` <- as.Date.character(nombre_de_ventes$`Date de commande`, format=c("%d/%m/%Y"))
+nombre_de_ventes$`Date de commande` <- format(nombre_de_ventes$`Date de commande`, format="%Y")
+names(nombre_de_ventes) <- c("Date","Pays","Ventes")
+
+#Calculer les ventes par pays pour éviter les lignes dupliquées après la deuxième jointure
+total <- nombre_de_ventes %>%
+  group_by(Date) %>%
+  mutate(ventes_par_année = sum(Ventes)) %>%
+  ungroup() %>%
+  group_by(Pays) %>%
+  mutate(Ventes_par_pays = sum(Ventes))
+
+#Données pour créer la carte
+map_data <- left_join(first_join, total, by=c('french_name'='Pays'))
+```
+
+
+
+```{r}
+??checkboxGroupInput
+```
+
+
+```{r}
+#### PARTIE BODY ####
+body <-  dashboardBody(
+  tags$head(tags$style(HTML('.info-box {min-height: 55px;} .info-box-icon {height: 55px; line-height: 55px;} .info-box-content {padding-top: 0px; padding-bottom: 0px;}'))),
+      fluidRow(
+        splitLayout(
+                infoBoxOutput("kpi1", width=2.4),
+                infoBoxOutput("kpi2", width=2.4),
+                infoBoxOutput("kpi3", width=2.4),
+                infoBoxOutput("kpi4", width=2.4),
+                infoBoxOutput("kpi5", width=2.4))
+      ),
+      fluidRow(
+        splitLayout(
+                plotOutput("pie1", height=230), 
+                plotOutput("pie3", height=230), 
+                plotOutput("pie2", height=230))
+      ),
+      
+  fluidRow(
+      column(plotlyOutput("bar_plot", height = 240), width=6),
+      column(plotlyOutput("map", height = 240), width=6)
+      )
+      )
+
+
+#### PARTIE SIDEBAR #### 
+sidebar <- dashboardSidebar(
+
+    sidebarMenu(
+      
+      pickerInput("features","Année", choices = c(2018,2019,2020,2021), options = list(`actions-box` = TRUE),
+                  multiple = T, selected = c(2018,2019,2020,2021)),
+      
+      pickerInput("mois","Mois", choices = c(unique(df$month)), options = list(`actions-box` = TRUE),multiple = T, 
+                   selected = c(unique(df$month))),
+      
+      pickerInput("pays", "Pays", liste_des_pays_fr, options = list(`actions-box` = TRUE), multiple = T, 
+                   selected = liste_des_pays_fr)
+    )
+    )
+
+
+#### Declaration de l'ui 
+ui <- dashboardPage(skin="blue",
+  dashboardHeader(title = "Market Analysis"),
+  sidebar,
+  body
+)
+
+# Define server logic ----
+server <- function(input, output) {
+  
+  # Code KPI 1
+  output$kpi1 = renderInfoBox({
+    infoBox(title="Quantité",
+    value=paste0(round(sum(df$Quantité[df$year %in% input$features & df$`Pays/Région` %in% input$pays & df$month %in% input$mois])/1000,2),"K"),icon = icon("list"), color = "blue")
+  })
+  
+  # Code KPI 2
+  output$kpi2 = renderInfoBox({
+    infoBox(title="Ventes",value = paste0(round(sum(df$Ventes[df$year %in% input$features & df$`Pays/Région` %in% input$pays & df$month %in% input$mois])/1000000, 2),"M€"),
+             icon = icon("credit-card"), color="blue")
+  })
+  
+  # Code KPI 3
+  output$kpi3 = renderInfoBox({
+    infoBox(title="Remise ",
+value = paste0(round(mean(df$Remise[df$year %in% input$features & df$`Pays/Région` %in% input$pays & df$month %in% input$mois]),2),"%"),
+               icon = icon("thumbs-up"), color="blue")
+  })
+  
+  # Code KPI 4
+  output$kpi4 = renderInfoBox({
+    infoBox(title="Profits",value = paste0(round(sum(df$Profit[df$year %in% input$features & df$`Pays/Région` %in% input$pays & df$month %in% input$mois])/1000000,2),"M€"),
+             icon = icon("credit-card"), color="blue")
+  })
+  
+  # Code KPI 5
+  output$kpi5 = renderInfoBox({
+    infoBox(title="Commandes",
+value = paste0(round(sum(dataset$Nb_cmd[df$year %in% input$features & df$`Pays/Région` %in% input$pays & df$month %in% input$mois])/1000,2),"K"), 
+icon = icon("list"), color="blue")
+  })
+  
+
+  #Code pie chart 1
+  output$pie1 = renderPlot({
+   
+  pie_chart_1_data <- data.frame(c("Fournitures de bureau", "Mobilier", "Produits technologiques"), 
+  c(mean(category_data_2$Pourcentage[category_data_2$`Catégorie`=="Fournitures de bureau" & category_data_2$year %in% input$features]),
+    mean(category_data_2$Pourcentage[category_data_2$`Catégorie`=="Mobilier" & category_data_2$year %in% input$features]),
+    mean(category_data_2$Pourcentage[category_data_2$`Catégorie`=="Produits technologiques" &  category_data_2$year %in% input$features])))
+  
+  names(pie_chart_1_data) <- c("Catégorie", "Pourcentage")
+
+  pie_chart_1_data %>%
+    ggplot()+
+    ggtitle("Répartition des ventes par type de produit")+
+    aes(x="",y=Pourcentage, fill=`Catégorie`)+
+    geom_bar(stat="identity", width=1) +
+    coord_polar("y", start=0)+
+    theme_void()+
+    theme(legend.position='bottom', 
+        legend.justification='left',
+        legend.direction='vertical',
+        plot.title = element_text(hjust = 0.5,size = 12, face = "bold", colour = "black"))+
+        scale_fill_brewer(palette="RdBu") +
+    geom_text(aes(label = paste0(round(Pourcentage,2),"%")),position = position_stack(vjust = 0.5), color = "black", size=3)
+    
+  
+  }, height=230)
+  
+  #Code pie chart 2
+   output$pie2 = renderPlot({
+     
+  pie_chart_2_data <- data.frame(c("Entreprise", "Grand public", "Petite et moyenne entreprise"), 
+  c(mean(segment_data_2$Pourcentage[segment_data_2$Segment=="Entreprise" & segment_data_2$year %in% input$features]),
+    mean(segment_data_2$Pourcentage[segment_data_2$Segment=="Grand public" & segment_data_2$year %in% input$features]),
+    mean(segment_data_2$Pourcentage[segment_data_2$Segment=="Petite et moyenne entreprise" &  segment_data_2$year %in% input$features])))
+  
+  names(pie_chart_2_data) <- c("Segment", "Pourcentage")
+   
+  pie_chart_2_data %>%   
+    ggplot()+
+    ggtitle("Répartition des ventes par segment")+
+    aes(x="",y=Pourcentage, fill=`Segment`)+
+    geom_bar(stat="identity", width=1) +
+    coord_polar("y", start=0)+
+    theme_void()+
+    theme(legend.position='bottom', 
+        legend.justification='left',
+        legend.direction='vertical',
+        plot.title = element_text(hjust = 0.5,size = 12, face = "bold", colour = "black")) +
+        scale_fill_brewer(palette="RdBu") +
+    geom_text(aes(label = paste0(round(Pourcentage,2), "%")), position = position_stack(vjust = 0.5), color = "black", size=3)
+    
+  }, height=230)
+   
+   #Code pie chart 3
+   output$pie3 = renderPlot({
+     
+     pie_chart_3_data <- data.frame(c("J+2", "Le même jour", "Prioritaire", "Tarif normal"), 
+    c(mean(mode_expedition_data_2$Pourcentage[mode_expedition_data_2$`Mode d'expédition`=="J+2" & mode_expedition_data_2$year %in% input$features]),
+    mean(mode_expedition_data_2$Pourcentage[mode_expedition_data_2$`Mode d'expédition`=="Le même jour" & mode_expedition_data_2$year %in% input$features]),
+    mean(mode_expedition_data_2$Pourcentage[mode_expedition_data_2$`Mode d'expédition`=="Prioritaire" &  mode_expedition_data_2$year %in% input$features]),
+    mean(mode_expedition_data_2$Pourcentage[mode_expedition_data_2$`Mode d'expédition`=="Tarif normal" &  mode_expedition_data_2$year %in% input$features])))
+  
+  names(pie_chart_3_data) <- c("Mode d'expédition", "Pourcentage")
+     
+ 
+  pie_chart_3_data %>%
+    ggplot()+
+    ggtitle("Répartition des ventes par mode d'expédition")+
+    aes(x="",y=Pourcentage, fill=`Mode d'expédition`)+
+    geom_bar(stat="identity", width=1) +
+    coord_polar("y", start=0)+
+    theme_void()+
+    theme(legend.position='bottom', 
+        legend.justification='left',
+        legend.direction='vertical',
+        plot.title = element_text(hjust = 0.5,size = 12, face = "bold", colour = "black")) +
+        scale_fill_brewer(palette="RdBu") +
+    geom_text(aes(label = paste0(round(Pourcentage,2),"%")),position = position_stack(vjust = 0.5), color = "black", size=3)
+  
+   }, height=230)
+   
+    
+   #Code bar plot
+     output$bar_plot = renderPlotly({
+       
+      ggplotly(bar_plot_data %>%
+      ggplot() +
+        ggtitle("Evolution des ventes et du profit par année pour tout les pays")+
+         geom_col(aes(x=year, y=ventes),fill="blue") +
+         geom_line(aes(x=year, y=profits))+
+         scale_y_continuous(sec.axis = sec_axis(trans =~. *0.1, name="Profit"))+
+         theme(legend.title = element_blank(),
+               plot.title = element_text(hjust = 0.5,size = 9, face = "bold", colour = "black"),
+               axis.text.x = element_text(size=6),
+               axis.text.y = element_text(size=6),
+               axis.title.x  = element_text(size=7),
+               axis.title.y = element_text(size=7))+
+         labs(x="Année", y="Ventes") 
+   )})
+     
+     
+   #Code carte
+     output$map <- renderPlotly({
+   
+       ggplotly(
+    map_data %>%
+      ggplot()+
+      ggtitle("Répartition des ventes par pays pour toutes les années") +
+      aes(x=long, y=lat, group=group)+
+      geom_polygon(aes(fill=Ventes_par_pays), color="black")+
+          scale_fill_gradient(name="Ventes par pays", low="lightblue",
+                              high="navy", na.value="grey50")+
+          theme(axis.text.x = element_blank(),
+                axis.text.y = element_blank(),
+                axis.ticks = element_blank(),
+                axis.title.x = element_blank(),
+                axis.title.y = element_blank(),
+                legend.title = element_text(size=8),
+                legend.text = element_text(size=6),
+                plot.title = element_text(hjust = 0.5,size = 9, face = "bold", colour = "black")))
+            })
+}
+
+shinyApp(ui = ui, server = server)
+
+```
